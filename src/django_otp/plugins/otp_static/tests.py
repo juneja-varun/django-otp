@@ -115,7 +115,7 @@ class AuthFormTest(TestCase):
         self.assertFalse(form.is_valid())
         self.assertEqual(form.get_user().get_username(), 'alice')
 
-    def test_passive_token(self):
+    def test_omitted_device(self):
         data = {
             'username': 'alice',
             'password': 'password',
@@ -123,11 +123,12 @@ class AuthFormTest(TestCase):
         }
         form = OTPAuthenticationForm(None, data)
 
-        self.assertTrue(form.is_valid())
+        # A device must be selected explicitly; we no longer guess by
+        # trying the token against each of the user's devices in turn.
+        self.assertFalse(form.is_valid())
         alice = form.get_user()
         self.assertEqual(alice.get_username(), 'alice')
-        self.assertIsInstance(alice.otp_device, StaticDevice)
-        self.assertEqual(alice.otp_device.token_set.count(), 2)
+        self.assertIsNone(alice.otp_device)
 
     def test_spoofed_device(self):
         data = {
