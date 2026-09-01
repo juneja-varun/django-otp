@@ -141,7 +141,7 @@ class OTPAuthenticationFormDeviceRequiredTestCase(TestCase):
             self.skipTest("Unable to create a test user.")
         else:
             self.static_device = self.alice.staticdevice_set.create(confirmed=True)
-            self.static_device.token_set.create(token='alice-static-token')
+            self.static_device.token_set.create(token='alice-static')
 
             self.totp_device = self.alice.totpdevice_set.create(confirmed=True)
 
