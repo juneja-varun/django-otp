@@ -5,7 +5,7 @@ from django.dispatch import Signal
 from django.utils.translation import gettext_lazy as _
 from django.utils.translation import ngettext_lazy
 
-from . import devices_for_user, match_token
+from . import devices_for_user
 from .models import Device, VerifyNotAllowed
 
 otp_verification_failed = Signal()
@@ -75,6 +75,7 @@ class OTPAuthenticationFormMixin:
         'verification_not_allowed': _(
             "Verification of the token is currently disabled"
         ),
+        'device_required': _('Please select a device.'),
     }
 
     def clean_otp(self, user):
@@ -156,27 +157,36 @@ class OTPAuthenticationFormMixin:
                 )
 
     def _verify_token(self, user, token, device=None):
-        if device is not None:
-            verify_is_allowed, extra = device.verify_is_allowed()
-            if not verify_is_allowed:
-                # Try to match specific conditions we know about.
-                if (
-                    'reason' in extra
-                    and extra['reason'] == VerifyNotAllowed.N_FAILED_ATTEMPTS
-                ):
-                    raise forms.ValidationError(
-                        self.otp_error_messages['n_failed_attempts'] % extra
-                    )
-                if 'error_message' in extra:
-                    raise forms.ValidationError(extra['error_message'])
-                # Fallback to generic message otherwise.
-                raise forms.ValidationError(
-                    self.otp_error_messages['verification_not_allowed']
-                )
+        if device is None:
+            # SECURITY: Trying every one of the user's devices in turn (as
+            # this used to do, via match_token()) records a failed
+            # verification attempt against each device that doesn't match,
+            # even though the overall login succeeds. That can throttle
+            # unrelated devices (e.g. recovery codes) that were never
+            # actually used. Require an explicit choice instead.
+            raise forms.ValidationError(
+                self.otp_error_messages['device_required'],
+                code='device_required',
+            )
 
-            device = device if device.verify_token(token) else None
-        else:
-            device = match_token(user, token)
+        verify_is_allowed, extra = device.verify_is_allowed()
+        if not verify_is_allowed:
+            # Try to match specific conditions we know about.
+            if (
+                'reason' in extra
+                and extra['reason'] == VerifyNotAllowed.N_FAILED_ATTEMPTS
+            ):
+                raise forms.ValidationError(
+                    self.otp_error_messages['n_failed_attempts'] % extra
+                )
+            if 'error_message' in extra:
+                raise forms.ValidationError(extra['error_message'])
+            # Fallback to generic message otherwise.
+            raise forms.ValidationError(
+                self.otp_error_messages['verification_not_allowed']
+            )
+
+        device = device if device.verify_token(token) else None
 
         if device is None:
             otp_verification_failed.send(
@@ -203,9 +213,9 @@ class OTPAuthenticationFormMixin:
 
 class OTPAuthenticationForm(OTPAuthenticationFormMixin, AuthenticationForm):
     """
-    This form provides the one-stop OTP authentication solution. It should
-    only be used when two-factor authentication is required: it does not
-    have an OTP-optional mode. The form has four fields:
+    This form provides an OTP authentication solution. It should only be
+    used when two-factor authentication is required: it does not have an
+    OTP-optional mode. The form has four fields:
 
         #. ``username`` is inherited from
            :class:`~django.contrib.auth.forms.AuthenticationForm`.
@@ -230,15 +240,26 @@ class OTPAuthenticationForm(OTPAuthenticationFormMixin, AuthenticationForm):
           should be visible. Validation of ``username`` and ``password`` is the
           same as for :class:`~django.contrib.auth.forms.AuthenticationForm`.
           If we are able to authenticate the user based on username and password,
-          then one of two things happens:
+          then one of three things happens:
 
-            - If the user submitted an OTP token, we will enumerate all of the
-              user's OTP devices, asking each one to verify it in turn. If one
-              of them succeeds, then authentication is fully successful and the
-              user is logged in.
+            - If the user did not submit an OTP token, a
+              :exc:`~django.core.exceptions.ValidationError` is raised
+              asking for one.
 
-            - If the user did not submit an OTP token or none of user's devices
-              accepted it, then a
+            - If no device was selected -- which will be the case on the
+              first submission, since ``otp_device`` should be omitted from
+              the template until the user is known -- a
+              :exc:`~django.core.exceptions.ValidationError` is raised
+              asking the user to choose a device. We will not guess by
+              trying the token against each of the user's devices in turn,
+              since a successful login that way would still count as a
+              failed verification attempt against every device that didn't
+              match, which can throttle devices (such as static recovery
+              codes) that were never actually used.
+
+            - If a device was selected, we will verify the submitted token
+              against it. If it succeeds, then authentication is fully
+              successful and the user is logged in. Otherwise, a
               :exc:`~django.core.exceptions.ValidationError` is raised.
 
         - In either case, as long as the user is authenticated by their

@@ -21,7 +21,11 @@ from django_otp import (
     util,
     verify_token,
 )
-from django_otp.forms import OTPTokenForm, otp_verification_failed
+from django_otp.forms import (
+    OTPAuthenticationForm,
+    OTPTokenForm,
+    otp_verification_failed,
+)
 from django_otp.middleware import OTPMiddleware
 from django_otp.plugins.otp_static.models import StaticDevice, StaticToken
 
@@ -117,6 +121,76 @@ class OTPVerificationFailedSignalTestCase(TestCase):
         self.assertTrue(
             self.signal_received, "otp_verification_failed signal was not emitted."
         )
+
+
+class OTPAuthenticationFormDeviceRequiredTestCase(TestCase):
+    """
+    https://github.com/django-otp/django-otp/issues/186
+
+    A token submitted without an explicit ``otp_device`` used to be checked
+    against every one of the user's devices in turn. A successful login
+    that way still counted as a failed verification attempt against each
+    device that didn't match, silently throttling devices (like recovery
+    codes) that were never actually used.
+    """
+
+    def setUp(self):
+        try:
+            self.alice = self.create_user('alice', 'password')
+        except IntegrityError:
+            self.skipTest("Unable to create a test user.")
+        else:
+            self.static_device = self.alice.staticdevice_set.create(confirmed=True)
+            self.static_device.token_set.create(token='alice-static')
+
+            self.totp_device = self.alice.totpdevice_set.create(confirmed=True)
+
+    def test_omitted_device_is_rejected(self):
+        token = str(oath.totp(self.totp_device.bin_key)).zfill(6)
+        data = {
+            'username': 'alice',
+            'password': 'password',
+            'otp_token': token,
+        }
+        form = OTPAuthenticationForm(None, data)
+
+        self.assertFalse(form.is_valid())
+        self.assertEqual(form.errors['__all__'].as_data()[0].code, 'device_required')
+        # The form should be redisplayed with the user's devices to choose
+        # from, so the next submission can include otp_device.
+        self.assertEqual(
+            set(form.fields['otp_device'].widget.choices),
+            {
+                (self.static_device.persistent_id, self.static_device.name),
+                (self.totp_device.persistent_id, self.totp_device.name),
+            },
+        )
+
+    def test_omitted_device_does_not_throttle_unrelated_devices(self):
+        token = str(oath.totp(self.totp_device.bin_key)).zfill(6)
+        data = {
+            'username': 'alice',
+            'password': 'password',
+            'otp_token': token,
+        }
+        form = OTPAuthenticationForm(None, data)
+        form.is_valid()
+
+        self.static_device.refresh_from_db()
+        self.assertEqual(self.static_device.throttling_failure_count, 0)
+
+    def test_selected_device_still_verifies(self):
+        token = str(oath.totp(self.totp_device.bin_key)).zfill(6)
+        data = {
+            'username': 'alice',
+            'password': 'password',
+            'otp_device': self.totp_device.persistent_id,
+            'otp_token': token,
+        }
+        form = OTPAuthenticationForm(None, data)
+
+        self.assertTrue(form.is_valid())
+        self.assertEqual(form.get_user().otp_device, self.totp_device)
 
 
 class OTPMiddlewareTestCase(TestCase):
