@@ -1,3 +1,14 @@
+v1.7.1 - September 02, 2026 - Form improvement
+--------------------------------------------------------------------------------
+
+- Routine test matrix update
+- `#188`_: Fix authentication form inappropriately triggering rate-limiting
+
+Thanks to Varun Juneja.
+
+.. _#188: https://github.com/django-otp/django-otp/pull/188
+
+
 v1.7.0 - January 07, 2026 - Async support
 --------------------------------------------------------------------------------
 
