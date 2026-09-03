@@ -1,3 +1,12 @@
+v1.7.2 - September 03, 2026 - Fix throttling overflow
+--------------------------------------------------------------------------------
+
+- `#190`_: OverflowError on the admin login page when a device's throttling
+  failure count is high (Varun Juneja)
+
+.. _#190: https://github.com/django-otp/django-otp/pull/190
+
+
 v1.7.1 - September 02, 2026 - Form improvement
 --------------------------------------------------------------------------------
 
