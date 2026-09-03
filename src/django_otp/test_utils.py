@@ -232,6 +232,25 @@ class ThrottlingTestMixin:
             self.assertEqual(verify_is_allowed3, True)
             self.assertEqual(data3, None)
 
+    def test_verify_is_allowed_with_large_failure_count(self):
+        """
+        A high failure count (e.g. after a sustained run of failed
+        attempts, or an admin editing the field directly) used to overflow
+        the exponential backoff delay calculation and crash instead of
+        just reporting a distant lockout.
+
+        https://github.com/django-otp/django-otp/issues/172
+        """
+        self.device.throttling_failure_count = 90
+        self.device.throttling_failure_timestamp = timezone.now()
+
+        verify_is_allowed, data = self.device.verify_is_allowed()
+
+        self.assertEqual(verify_is_allowed, False)
+        self.assertEqual(data['reason'], VerifyNotAllowed.N_FAILED_ATTEMPTS)
+        self.assertEqual(data['failure_count'], 90)
+        self.assertGreater(data['locked_until'], timezone.now())
+
 
 class CooldownTestMixin:
     def setUp(self):

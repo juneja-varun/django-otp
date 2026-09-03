@@ -11,6 +11,12 @@ from django.utils.functional import cached_property
 
 from .util import random_number_token
 
+# The exponential throttling delay can grow arbitrarily large with a high
+# enough failure count, well past what `timedelta` can represent. Cap it at
+# something that's already far longer than any realistic lockout needs to
+# be, rather than let the delay calculation overflow.
+MAX_THROTTLE_DELAY_SECONDS = timedelta(days=365 * 100).total_seconds()
+
 
 class DeviceManager(models.Manager):
     """
@@ -522,8 +528,9 @@ class ThrottlingMixin(models.Model):
             now = timezone.now()
             delay = (now - self.throttling_failure_timestamp).total_seconds()
             # Required delays should be 1, 2, 4, 8 ...
-            delay_required = self.get_throttle_factor() * (
-                2 ** (self.throttling_failure_count - 1)
+            delay_required = min(
+                self.get_throttle_factor() * (2 ** (self.throttling_failure_count - 1)),
+                MAX_THROTTLE_DELAY_SECONDS,
             )
             if delay < delay_required:
                 return (
